@@ -20,10 +20,8 @@
     --radius:16px; --shadow:0 12px 28px rgba(2,6,23,.06);
   }
   *{box-sizing:border-box}
-  body{
-    margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;
-    background:var(--bg); color:var(--text);
-  }
+  body{margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;
+    background:var(--bg); color:var(--text);}
   header{
     position:sticky; top:0; z-index:10;
     display:flex; align-items:center; gap:16px;
@@ -35,10 +33,7 @@
   .grid{ display:grid; gap:16px }
   .filters{ grid-template-columns:repeat(3, minmax(0,1fr)); }
   .lists{ grid-template-columns:repeat(2, minmax(0,1fr)); }
-  @media (max-width:768px){
-    .filters{ grid-template-columns:1fr; }
-    .lists{ grid-template-columns:1fr; }
-  }
+  @media (max-width:768px){.filters{grid-template-columns:1fr}.lists{grid-template-columns:1fr}}
   .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px }
   label{ font-weight:600; font-size:.9rem; margin-bottom:6px; display:block }
   input[type="date"],input[type="text"]{
@@ -50,6 +45,8 @@
   .loader{ display:flex; align-items:center; justify-content:center; gap:10px; padding:22px; color:var(--muted) }
   .spinner{ width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:spin .8s linear infinite }
   @keyframes spin{ to{ transform:rotate(360deg) } }
+  .alta{ color:var(--ok); font-weight:600; }
+  .queda{ color:var(--danger); font-weight:600; }
 
   /* Modal */
   .modal{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:50; }
@@ -61,10 +58,6 @@
   .modal-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .close{ cursor:pointer; font-size:22px; font-weight:bold; }
   #graficoProduto{ width:100% !important; height:100% !important; }
-
-  /* Estilos alta/queda */
-  .alta{ color:var(--ok); font-weight:600; }
-  .queda{ color:var(--danger); font-weight:600; }
 </style>
 </head>
 <body>
@@ -120,6 +113,13 @@
 const URL_SCRIPT="https://script.google.com/macros/s/AKfycbxu0HjXsbvXr9OGYDAEfN8Kqyle4d2GFb26wu8aAcAtfM-RkcILV9AywDjf1Fu8rW_NwQ/exec";
 let CACHE=[], chartProd=null, PRODUTO_ATUAL=null;
 const $$=sel=>document.querySelector(sel);
+
+// formato mês abreviado
+const meses=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+function formatMes(ym){ 
+  const [y,m]=ym.split('-'); 
+  return meses[parseInt(m)-1]+'/'+y.slice(2);
+}
 
 async function fetchMercatto(){
   const res=await fetch(`${URL_SCRIPT}?empresa=MERCATTO`);
@@ -205,39 +205,74 @@ function renderLista(sel, arr, perc=false){
 }
 function mostrarGrafico(prod){
   PRODUTO_ATUAL=prod;
+
+  // base de labels (meses)
+  const allMeses=[...new Set(CACHE.map(r=>{
+    const [ano,mes]=r.data.split('-');
+    return `${ano}-${mes}`;
+  }))].sort();
+
   const canvas=$$('#graficoProduto'); 
   if(chartProd) chartProd.destroy();
-  const labels=Object.keys(prod.mes).sort();
-  const vals=labels.map(l=>prod.mes[l]);
+
+  const vals=allMeses.map(m=>prod.mes[m]||0);
+
   chartProd=new Chart(canvas.getContext('2d'),{
     type:'line',
-    data:{labels,datasets:[{label:prod.produto,data:vals,borderColor:'#2563eb',fill:false}]},
-    options:{responsive:true,plugins:{legend:{display:true}}}
+    data:{
+      labels:allMeses.map(formatMes),
+      datasets:[{
+        label:prod.produto,
+        data:vals,
+        borderColor:'#2563eb',
+        pointRadius:5,
+        pointHoverRadius:7,
+        fill:false
+      }]
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true},
+        tooltip:{
+          callbacks:{
+            label:function(ctx){
+              let val=ctx.parsed.y||0;
+              return ctx.dataset.label+': '+val.toLocaleString('pt-BR')+' un';
+            }
+          }
+        }
+      },
+      scales:{
+        x:{title:{display:true,text:"Meses"},ticks:{autoSkip:false,maxRotation:45,minRotation:45}},
+        y:{beginAtZero:true,title:{display:true,text:"Quantidade"}}
+      }
+    }
   });
   $$('#tituloProduto').textContent=prod.produto;
 
-  // preencher select com produtos carregados
+  // preencher select
   const sel=$('#selectComparar');
   sel.empty();
   const nomes=[...new Set(CACHE.map(x=>x.produto).filter(n=>n && n!==prod.produto))].sort();
-  nomes.forEach(nome=>{
-    sel.append(new Option(nome,nome));
-  });
-
-  // inicializar Select2 multi
-  sel.select2({
-    placeholder: "Digite para buscar produtos...",
-    allowClear: true
-  });
+  nomes.forEach(nome=>sel.append(new Option(nome,nome)));
+  sel.select2({placeholder:"Digite para buscar produtos...", allowClear:true});
 
   $$('#modalGrafico').style.display='flex';
 }
 function fecharModal(){ $$('#modalGrafico').style.display='none'; }
 function compararProduto(){
-  const nomes=$('#selectComparar').val(); // múltiplos
+  const nomes=$('#selectComparar').val(); 
   if(!nomes || !nomes.length) return;
+
+  const allMeses=[...new Set(CACHE.map(r=>{
+    const [ano,mes]=r.data.split('-'); return `${ano}-${mes}`;
+  }))].sort();
+  const labels=allMeses.map(formatMes);
+
   nomes.forEach(nome=>{
-    if(chartProd.data.datasets.some(ds=>ds.label===nome)) return; // evitar duplicar
+    if(chartProd.data.datasets.some(ds=>ds.label===nome)) return;
     const prod=CACHE.filter(r=>r.produto===nome);
     if(!prod.length) return;
     const byMes={};
@@ -246,12 +281,13 @@ function compararProduto(){
       const chave=`${ano}-${mes}`;
       byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
     });
-    const labels=chartProd.data.labels;
-    const vals=labels.map(l=>byMes[l]||0);
+    const vals=allMeses.map(m=>byMes[m]||0);
     chartProd.data.datasets.push({
       label:nome,
       data:vals,
-      borderColor:'#'+Math.floor(Math.random()*16777215).toString(16), // cor aleatória
+      borderColor:'#'+Math.floor(Math.random()*16777215).toString(16),
+      pointRadius:5,
+      pointHoverRadius:7,
       fill:false
     });
   });
