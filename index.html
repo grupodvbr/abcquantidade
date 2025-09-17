@@ -7,10 +7,16 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Select2 -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
 <style>
   :root{
     --bg:#f6f8fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --line:#e5e7eb;
-    --brand:#2563eb; --ok:#16a34a; --warn:#b45309; --danger:#ef4444;
+    --brand:#2563eb; --ok:#16a34a; --danger:#ef4444;
     --radius:16px; --shadow:0 12px 28px rgba(2,6,23,.06);
   }
   *{box-sizing:border-box}
@@ -47,10 +53,18 @@
 
   /* Modal */
   .modal{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:50; }
-  .modal-content{ background:#fff; border-radius:16px; padding:20px; width:90%; max-width:1000px; display:grid; grid-template-columns:2fr 1fr; gap:20px; }
+  .modal-content{ 
+    background:#fff; border-radius:16px; padding:20px; 
+    width:95%; max-width:1400px; height:85vh; 
+    display:grid; grid-template-columns:2.5fr 1fr; gap:20px; 
+  }
   .modal-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .close{ cursor:pointer; font-size:22px; font-weight:bold; }
-  #graficoProduto{ width:100% !important; height:400px !important; }
+  #graficoProduto{ width:100% !important; height:100% !important; }
+
+  /* Estilos alta/queda */
+  .alta{ color:var(--ok); font-weight:600; }
+  .queda{ color:var(--danger); font-weight:600; }
 </style>
 </head>
 <body>
@@ -95,9 +109,9 @@
       <canvas id="graficoProduto"></canvas>
     </div>
     <div>
-      <label>Comparar com outro produto:</label>
-      <select id="selectComparar"></select>
-      <button onclick="compararProduto()">Adicionar</button>
+      <label>Comparar com outros produtos:</label>
+      <select id="selectComparar" multiple="multiple" style="width:100%"></select>
+      <button onclick="compararProduto()">Adicionar Selecionados</button>
     </div>
   </div>
 </div>
@@ -180,7 +194,14 @@ function aplicar(){
 }
 function renderLista(sel, arr, perc=false){
   const el=$$(sel);
-  el.innerHTML=arr.map(p=>`<div class="item">${p.produto} — ${p.q.toLocaleString()} un ${perc?`(${p.perc.toFixed(1)}%)`:''}</div>`).join('')||'<div class="muted">—</div>';
+  el.innerHTML=arr.map(p=>{
+    if(perc){
+      const classe=p.perc>0?'alta':'queda';
+      const seta=p.perc>0?'⬆️':'⬇️';
+      return `<div class="item ${classe}">${p.produto} — ${p.q.toLocaleString()} un (${seta} ${p.perc.toFixed(1)}%)</div>`;
+    }
+    return `<div class="item">${p.produto} — ${p.q.toLocaleString()} un</div>`;
+  }).join('')||'<div class="muted">—</div>';
 }
 function mostrarGrafico(prod){
   PRODUTO_ATUAL=prod;
@@ -195,38 +216,44 @@ function mostrarGrafico(prod){
   });
   $$('#tituloProduto').textContent=prod.produto;
 
-  // preencher select de comparação
-  const sel=$$('#selectComparar');
-  sel.innerHTML='';
-  CACHE.forEach(x=>{
-    if(x.produto && x.produto!==prod.produto && ![...sel.options].some(o=>o.value===x.produto)){
-      const opt=document.createElement('option');
-      opt.value=x.produto; opt.textContent=x.produto;
-      sel.appendChild(opt);
-    }
+  // preencher select com produtos carregados
+  const sel=$('#selectComparar');
+  sel.empty();
+  const nomes=[...new Set(CACHE.map(x=>x.produto).filter(n=>n && n!==prod.produto))].sort();
+  nomes.forEach(nome=>{
+    sel.append(new Option(nome,nome));
+  });
+
+  // inicializar Select2 multi
+  sel.select2({
+    placeholder: "Digite para buscar produtos...",
+    allowClear: true
   });
 
   $$('#modalGrafico').style.display='flex';
 }
 function fecharModal(){ $$('#modalGrafico').style.display='none'; }
 function compararProduto(){
-  const nome=$$('#selectComparar').value;
-  if(!nome) return;
-  const prod=CACHE.filter(r=>r.produto===nome);
-  if(!prod.length){alert("Produto não encontrado"); return;}
-  const byMes={};
-  prod.forEach(x=>{
-    const [ano,mes]=x.data.split('-'); 
-    const chave=`${ano}-${mes}`;
-    byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
-  });
-  const labels=chartProd.data.labels;
-  const vals=labels.map(l=>byMes[l]||0);
-  chartProd.data.datasets.push({
-    label:nome,
-    data:vals,
-    borderColor:'#ef4444',
-    fill:false
+  const nomes=$('#selectComparar').val(); // múltiplos
+  if(!nomes || !nomes.length) return;
+  nomes.forEach(nome=>{
+    if(chartProd.data.datasets.some(ds=>ds.label===nome)) return; // evitar duplicar
+    const prod=CACHE.filter(r=>r.produto===nome);
+    if(!prod.length) return;
+    const byMes={};
+    prod.forEach(x=>{
+      const [ano,mes]=x.data.split('-'); 
+      const chave=`${ano}-${mes}`;
+      byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
+    });
+    const labels=chartProd.data.labels;
+    const vals=labels.map(l=>byMes[l]||0);
+    chartProd.data.datasets.push({
+      label:nome,
+      data:vals,
+      borderColor:'#'+Math.floor(Math.random()*16777215).toString(16), // cor aleatória
+      fill:false
+    });
   });
   chartProd.update();
 }
