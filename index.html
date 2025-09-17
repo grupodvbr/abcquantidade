@@ -27,20 +27,26 @@
   header h1{ margin:0; font-size:1.4rem; font-weight:700; }
   .container{ padding:20px }
   .grid{ display:grid; gap:16px }
-  .filters{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+  .filters{ grid-template-columns:repeat(3, minmax(0,1fr)); }
   @media (max-width:768px){ .filters{ grid-template-columns:1fr; } }
   .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px }
   label{ font-weight:600; font-size:.9rem; margin-bottom:6px; display:block }
-  select,input[type="date"],input[type="text"]{
+  input[type="date"],input[type="text"]{
     width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; font-size:.95rem
   }
   .section-title{ margin:18px 4px 10px; font-size:1rem; font-weight:700 }
   .item{ padding:10px 12px; border:1px dashed var(--line); border-radius:12px; margin-bottom:10px; background:#fff; cursor:pointer }
   .item:hover{ background:#f0f4ff }
-  #graficoProduto{ display:none; width:100% !important; max-width:900px; margin:20px auto }
   .loader{ display:flex; align-items:center; justify-content:center; gap:10px; padding:22px; color:var(--muted) }
   .spinner{ width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:spin .8s linear infinite }
   @keyframes spin{ to{ transform:rotate(360deg) } }
+
+  /* Modal */
+  .modal{ display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:50; }
+  .modal-content{ background:#fff; border-radius:16px; padding:20px; width:90%; max-width:1000px; display:grid; grid-template-columns:2fr 1fr; gap:20px; }
+  .modal-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .close{ cursor:pointer; font-size:22px; font-weight:bold; }
+  #graficoProduto{ width:100% !important; height:400px !important; }
 </style>
 </head>
 <body>
@@ -57,9 +63,6 @@
     <div class="card"><label>📅 Fim</label><input id="dataFim" type="date" /></div>
   </div>
 
-  <!-- Gráfico -->
-  <div class="card"><canvas id="graficoProduto"></canvas></div>
-
   <!-- Lista -->
   <div class="section-title">Produtos Vendidos</div>
   <div class="card">
@@ -68,11 +71,28 @@
   </div>
 </div>
 
+<!-- Modal -->
+<div id="modalGrafico" class="modal">
+  <div class="modal-content">
+    <div>
+      <div class="modal-header">
+        <h3 id="tituloProduto">Análise de Produto</h3>
+        <span class="close" onclick="fecharModal()">&times;</span>
+      </div>
+      <canvas id="graficoProduto"></canvas>
+    </div>
+    <div>
+      <label>Comparar com outro produto:</label>
+      <input id="buscaComparar" type="text" placeholder="Digite o nome..." />
+      <button onclick="compararProduto()">Adicionar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const URL_SCRIPT="https://script.google.com/macros/s/AKfycbxu0HjXsbvXr9OGYDAEfN8Kqyle4d2GFb26wu8aAcAtfM-RkcILV9AywDjf1Fu8rW_NwQ/exec";
-let CACHE=[], chartProd=null;
+let CACHE=[], chartProd=null, PRODUTO_ATUAL=null;
 const $$=sel=>document.querySelector(sel);
-const dBR=iso=>!iso?'':iso.split('-').reverse().join('/');
 
 async function fetchMercatto(){
   const res=await fetch(`${URL_SCRIPT}?empresa=MERCATTO`);
@@ -80,9 +100,14 @@ async function fetchMercatto(){
   try{json=JSON.parse(txt);}catch(e){throw new Error('Resposta inválida:\n'+txt);}
   return Array.isArray(json)?json:(json.dados||[]);
 }
-function setDatasPorFaixa(arr){
-  const datas=arr.map(d=>d.data).filter(Boolean).sort(); if(!datas.length) return;
-  $$('#dataInicio').value=datas[0]; $$('#dataFim').value=datas[datas.length-1];
+function setDatasMesAtual(){
+  const hoje=new Date();
+  const ano=hoje.getFullYear();
+  const mes=hoje.getMonth();
+  const inicio=new Date(ano, mes, 1).toISOString().slice(0,10);
+  const fim=new Date(ano, mes+1, 0).toISOString().slice(0,10);
+  $$('#dataInicio').value=inicio;
+  $$('#dataFim').value=fim;
 }
 function aplicar(){
   const busca=($$('#filtroBusca').value||'').toLowerCase();
@@ -92,10 +117,11 @@ function aplicar(){
     if(di&&r.data<di)return false; if(df&&r.data>df)return false; return true;
   });
   const byProd={}; F.forEach(x=>{
-    if(!byProd[x.produto])byProd[x.produto]={produto:x.produto,q:0,ano:{}};
+    if(!byProd[x.produto])byProd[x.produto]={produto:x.produto,q:0,mes:{}};
     byProd[x.produto].q+=(x.quantidade||0);
-    const ano=(x.data||'').split('-')[0]; 
-    if(ano){byProd[x.produto].ano[ano]=(byProd[x.produto].ano[ano]||0)+(x.quantidade||0);}
+    const [ano,mes]=x.data.split('-'); 
+    const chave=`${ano}-${mes}`;
+    byProd[x.produto].mes[chave]=(byProd[x.produto].mes[chave]||0)+(x.quantidade||0);
   });
   const lista=Object.values(byProd).sort((a,b)=>b.q-a.q);
   const cont=$$('#listaVendas'); cont.innerHTML='';
@@ -109,20 +135,47 @@ function aplicar(){
   $$('#listaVendas').style.display=lista.length?'block':'none';
 }
 function mostrarGrafico(prod){
+  PRODUTO_ATUAL=prod;
   const canvas=$$('#graficoProduto'); 
   if(chartProd) chartProd.destroy();
-  const anos=Object.keys(prod.ano).sort();
-  const vals=anos.map(a=>prod.ano[a]);
+  const labels=Object.keys(prod.mes).sort();
+  const vals=labels.map(l=>prod.mes[l]);
   chartProd=new Chart(canvas.getContext('2d'),{
-    type:'bar',
-    data:{labels:anos,datasets:[{label:`${prod.produto} — Quantidade no ano`,data:vals,backgroundColor:'#2563eb'}]},
-    options:{responsive:true,plugins:{legend:{display:false}}}
+    type:'line',
+    data:{labels,datasets:[{label:prod.produto,data:vals,borderColor:'#2563eb',fill:false}]},
+    options:{responsive:true,plugins:{legend:{display:true}}}
   });
-  canvas.style.display='block';
+  $$('#tituloProduto').textContent=prod.produto;
+  $$('#modalGrafico').style.display='flex';
+}
+function fecharModal(){ $$('#modalGrafico').style.display='none'; }
+function compararProduto(){
+  const nome=($$('#buscaComparar').value||'').toLowerCase();
+  if(!nome) return;
+  const prod=CACHE.filter(r=>r.produto&&r.produto.toLowerCase().includes(nome));
+  if(!prod.length){alert("Produto não encontrado"); return;}
+  const byMes={};
+  prod.forEach(x=>{
+    const [ano,mes]=x.data.split('-'); 
+    const chave=`${ano}-${mes}`;
+    byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
+  });
+  const labels=Object.keys(PRODUTO_ATUAL.mes).sort();
+  const vals=labels.map(l=>byMes[l]||0);
+  chartProd.data.datasets.push({
+    label:nome,
+    data:vals,
+    borderColor:'#ef4444',
+    fill:false
+  });
+  chartProd.update();
 }
 async function boot(){
   try{
-    const arr=await fetchMercatto(); CACHE=arr; setDatasPorFaixa(arr); aplicar();
+    const arr=await fetchMercatto(); 
+    CACHE=arr; 
+    setDatasMesAtual();  
+    aplicar();
   }catch(e){ $$('#statusBox').textContent='Erro ao carregar: '+(e.message||e); }
 }
 window.addEventListener('load',()=>{
