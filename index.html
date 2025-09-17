@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>ABC de Vendas • Mercatto</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root{
+    --bg:#f6f8fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --line:#e5e7eb;
+    --brand:#2563eb; --radius:16px; --shadow:0 12px 28px rgba(2,6,23,.06);
+  }
+  *{box-sizing:border-box}
+  html, body { height:100%; }
+  body{
+    margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;
+    background:var(--bg); color:var(--text);
+  }
+  header{
+    position:sticky; top:0; z-index:10;
+    display:flex; align-items:center; gap:16px;
+    padding:14px 20px; background:#fff; border-bottom:1px solid var(--line);
+  }
+  header img{ height:56px; }
+  header h1{ margin:0; font-size:1.4rem; font-weight:700; }
+  .container{ padding:20px }
+  .grid{ display:grid; gap:16px }
+  .filters{ grid-template-columns:repeat(4, minmax(0,1fr)); }
+  @media (max-width:768px){ .filters{ grid-template-columns:1fr; } }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px }
+  label{ font-weight:600; font-size:.9rem; margin-bottom:6px; display:block }
+  select,input[type="date"],input[type="text"]{
+    width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; font-size:.95rem
+  }
+  .section-title{ margin:18px 4px 10px; font-size:1rem; font-weight:700 }
+  .item{ padding:10px 12px; border:1px dashed var(--line); border-radius:12px; margin-bottom:10px; background:#fff; cursor:pointer }
+  .item:hover{ background:#f0f4ff }
+  #graficoProduto{ display:none; width:100% !important; max-width:900px; margin:20px auto }
+  .loader{ display:flex; align-items:center; justify-content:center; gap:10px; padding:22px; color:var(--muted) }
+  .spinner{ width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:spin .8s linear infinite }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
+</style>
+</head>
+<body>
+<header>
+  <img src="https://github.com/ClenaStore/painel-principal/blob/main/img/GRUPO%20DV%20(1).png?raw=true" alt="Grupo DV">
+  <h1>ABC de Vendas • Mercatto</h1>
+</header>
+
+<div class="container">
+  <!-- Filtros -->
+  <div class="grid filters">
+    <div class="card"><label>🔍 Busca</label><input id="filtroBusca" type="text" placeholder="Produto..." /></div>
+    <div class="card"><label>📅 Início</label><input id="dataInicio" type="date" /></div>
+    <div class="card"><label>📅 Fim</label><input id="dataFim" type="date" /></div>
+  </div>
+
+  <!-- Gráfico -->
+  <div class="card"><canvas id="graficoProduto"></canvas></div>
+
+  <!-- Lista -->
+  <div class="section-title">Produtos Vendidos</div>
+  <div class="card">
+    <div id="statusBox" class="loader"><div class="spinner"></div> Carregando Mercatto…</div>
+    <div id="listaVendas" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const URL_SCRIPT='/api/abc_vendas';
+let CACHE=[], chartProd=null;
+const $$=sel=>document.querySelector(sel);
+const dBR=iso=>!iso?'':iso.split('-').reverse().join('/');
+
+async function fetchMercatto(){
+  const res=await fetch(`${URL_SCRIPT}?empresa=MERCATTO`);
+  const txt=await res.text(); let json;
+  try{json=JSON.parse(txt);}catch(e){throw new Error('Resposta inválida:\n'+txt);}
+  return Array.isArray(json)?json:(json.dados||[]);
+}
+function setDatasPorFaixa(arr){
+  const datas=arr.map(d=>d.data).filter(Boolean).sort(); if(!datas.length) return;
+  $$('#dataInicio').value=datas[0]; $$('#dataFim').value=datas[datas.length-1];
+}
+function aplicar(){
+  const busca=($$('#filtroBusca').value||'').toLowerCase();
+  const di=$$('#dataInicio').value, df=$$('#dataFim').value;
+  let F=CACHE.filter(r=>{
+    if(busca&&!String(r.produto||'').toLowerCase().includes(busca))return false;
+    if(di&&r.data<di)return false; if(df&&r.data>df)return false; return true;
+  });
+  const byProd={}; F.forEach(x=>{
+    if(!byProd[x.produto])byProd[x.produto]={produto:x.produto,q:0,ano:{}};
+    byProd[x.produto].q+=(x.quantidade||0);
+    const ano=(x.data||'').split('-')[0]; 
+    if(ano){byProd[x.produto].ano[ano]=(byProd[x.produto].ano[ano]||0)+(x.quantidade||0);}
+  });
+  const lista=Object.values(byProd).sort((a,b)=>b.q-a.q);
+  const cont=$$('#listaVendas'); cont.innerHTML='';
+  lista.forEach(p=>{
+    const div=document.createElement('div'); div.className='item';
+    div.textContent=`${p.produto} — ${p.q} un`;
+    div.onclick=()=>mostrarGrafico(p);
+    cont.appendChild(div);
+  });
+  $$('#statusBox').style.display=lista.length?'none':'block';
+  $$('#listaVendas').style.display=lista.length?'block':'none';
+}
+function mostrarGrafico(prod){
+  const canvas=$$('#graficoProduto'); 
+  if(chartProd) chartProd.destroy();
+  const anos=Object.keys(prod.ano).sort();
+  const vals=anos.map(a=>prod.ano[a]);
+  chartProd=new Chart(canvas.getContext('2d'),{
+    type:'bar',
+    data:{labels:anos,datasets:[{label:`${prod.produto} — Quantidade no ano`,data:vals,backgroundColor:'#2563eb'}]},
+    options:{responsive:true,plugins:{legend:{display:false}}}
+  });
+  canvas.style.display='block';
+}
+async function boot(){
+  try{
+    const arr=await fetchMercatto(); CACHE=arr; setDatasPorFaixa(arr); aplicar();
+  }catch(e){ $$('#statusBox').textContent='Erro ao carregar: '+(e.message||e); }
+}
+window.addEventListener('load',()=>{
+  boot();
+  ['input','change'].forEach(evt=>{
+    $$('#filtroBusca').addEventListener(evt,aplicar);
+    $$('#dataInicio').addEventListener(evt,aplicar);
+    $$('#dataFim').addEventListener(evt,aplicar);
+  });
+});
+</script>
+</body>
+</html>
