@@ -24,11 +24,12 @@
     background:var(--bg); color:var(--text);}
   header{
     position:sticky; top:0; z-index:10;
-    display:flex; align-items:center; gap:16px;
+    display:flex; align-items:center; justify-content:space-between;
     padding:14px 20px; background:#fff; border-bottom:1px solid var(--line);
   }
   header img{ height:56px; }
   header h1{ margin:0; font-size:1.4rem; font-weight:700; }
+  .btn{ background:var(--brand); color:#fff; border:none; padding:8px 14px; border-radius:8px; cursor:pointer; }
   .container{ padding:20px }
   .grid{ display:grid; gap:16px }
   .filters{ grid-template-columns:repeat(3, minmax(0,1fr)); }
@@ -62,8 +63,11 @@
 </head>
 <body>
 <header>
-  <img src="https://github.com/ClenaStore/painel-principal/blob/main/img/GRUPO%20DV%20(1).png?raw=true" alt="Grupo DV">
-  <h1>ABC de Vendas • Mercatto</h1>
+  <div style="display:flex;align-items:center;gap:16px">
+    <img src="https://github.com/ClenaStore/painel-principal/blob/main/img/GRUPO%20DV%20(1).png?raw=true" alt="Grupo DV">
+    <h1>ABC de Vendas • Mercatto</h1>
+  </div>
+  <button class="btn" onclick="atualizarAgora()">🔄 Atualizar</button>
 </header>
 
 <div class="container">
@@ -112,29 +116,39 @@
 <script>
 const URL_SCRIPT="https://script.google.com/macros/s/AKfycbxu0HjXsbvXr9OGYDAEfN8Kqyle4d2GFb26wu8aAcAtfM-RkcILV9AywDjf1Fu8rW_NwQ/exec";
 let CACHE=[], chartProd=null, PRODUTO_ATUAL=null;
+const STORAGE_KEY="abc_mercatto_cache", EXPIRA_MS=6*60*60*1000;
 const $$=sel=>document.querySelector(sel);
 
-// formato mês abreviado
+// meses formatados
 const meses=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-function formatMes(ym){ 
-  const [y,m]=ym.split('-'); 
-  return meses[parseInt(m)-1]+'/'+y.slice(2);
-}
+function formatMes(ym){ const [y,m]=ym.split('-'); return meses[parseInt(m)-1]+'/'+y.slice(2); }
 
-async function fetchMercatto(){
+async function fetchMercatto(force=false){
+  if(!force){
+    try{
+      const raw=localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        const parsed=JSON.parse(raw);
+        if(Date.now()-parsed.ts<EXPIRA_MS){
+          console.log("⚡ Dados carregados do localStorage");
+          return parsed.data;
+        }
+      }
+    }catch(e){ console.warn("Erro ao ler cache:",e); }
+  }
   const res=await fetch(`${URL_SCRIPT}?empresa=MERCATTO`);
   const txt=await res.text(); let json;
-  try{json=JSON.parse(txt);}catch(e){throw new Error('Resposta inválida:\n'+txt);}
-  return Array.isArray(json)?json:(json.dados||[]);
+  try{json=JSON.parse(txt);}catch(e){throw new Error("Resposta inválida:\n"+txt);}
+  const arr=Array.isArray(json)?json:(json.dados||[]);
+  try{localStorage.setItem(STORAGE_KEY,JSON.stringify({data:arr,ts:Date.now()}));}catch(e){}
+  return arr;
 }
 function setDatasMesAtual(){
   const hoje=new Date();
-  const ano=hoje.getFullYear();
-  const mes=hoje.getMonth();
-  const inicio=new Date(ano, mes, 1).toISOString().slice(0,10);
-  const fim=new Date(ano, mes+1, 0).toISOString().slice(0,10);
-  $$('#dataInicio').value=inicio;
-  $$('#dataFim').value=fim;
+  const ano=hoje.getFullYear(), mes=hoje.getMonth();
+  const inicio=new Date(ano,mes,1).toISOString().slice(0,10);
+  const fim=new Date(ano,mes+1,0).toISOString().slice(0,10);
+  $$('#dataInicio').value=inicio; $$('#dataFim').value=fim;
 }
 function aplicar(){
   const busca=($$('#filtroBusca').value||'').toLowerCase();
@@ -143,45 +157,31 @@ function aplicar(){
     if(busca&&!String(r.produto||'').toLowerCase().includes(busca))return false;
     if(di&&r.data<di)return false; if(df&&r.data>df)return false; return true;
   });
-
-  // agrupar por produto
   const byProd={};
   F.forEach(x=>{
     if(!byProd[x.produto])byProd[x.produto]={produto:x.produto,q:0,mes:{}};
     byProd[x.produto].q+=(x.quantidade||0);
-    const [ano,mes]=x.data.split('-'); 
-    const chave=`${ano}-${mes}`;
+    const [ano,mes]=x.data.split('-'); const chave=`${ano}-${mes}`;
     byProd[x.produto].mes[chave]=(byProd[x.produto].mes[chave]||0)+(x.quantidade||0);
   });
-
   const arr=Object.values(byProd).sort((a,b)=>b.q-a.q);
-
-  // Top 10 mais e menos vendidos
-  renderLista('#maisVendidos', arr.slice(0,10));
-  renderLista('#menosVendidos', arr.slice(-10));
-
-  // Comparação mês atual x mês anterior
-  const hoje=new Date();
-  const ano=hoje.getFullYear();
+  renderLista('#maisVendidos',arr.slice(0,10));
+  renderLista('#menosVendidos',arr.slice(-10));
+  const hoje=new Date(); const ano=hoje.getFullYear();
   const mesAtual=String(hoje.getMonth()+1).padStart(2,'0');
   const mesAnterior=String(hoje.getMonth()).padStart(2,'0');
-  const chaveAtual=`${ano}-${mesAtual}`;
-  const chaveAnterior=`${ano}-${mesAnterior}`;
-
+  const chaveAtual=`${ano}-${mesAtual}`, chaveAnterior=`${ano}-${mesAnterior}`;
   const alta=[], queda=[];
   arr.forEach(p=>{
-    const atual=p.mes[chaveAtual]||0;
-    const anterior=p.mes[chaveAnterior]||0;
+    const atual=p.mes[chaveAtual]||0, anterior=p.mes[chaveAnterior]||0;
     if(anterior>0){
       const variacao=((atual-anterior)/anterior)*100;
       if(variacao>0) alta.push({produto:p.produto,q:atual,perc:variacao});
       if(variacao<0) queda.push({produto:p.produto,q:atual,perc:variacao});
     }
   });
-  renderLista('#prodAlta', alta.sort((a,b)=>b.perc-a.perc).slice(0,10),true);
-  renderLista('#prodQueda', queda.sort((a,b)=>a.perc-b.perc).slice(0,10),true);
-
-  // Lista geral
+  renderLista('#prodAlta',alta.sort((a,b)=>b.perc-a.perc).slice(0,10),true);
+  renderLista('#prodQueda',queda.sort((a,b)=>a.perc-b.perc).slice(0,10),true);
   const cont=$$('#listaVendas'); cont.innerHTML='';
   arr.forEach(p=>{
     const div=document.createElement('div'); div.className='item';
@@ -192,7 +192,7 @@ function aplicar(){
   $$('#statusBox').style.display=arr.length?'none':'block';
   $$('#listaVendas').style.display=arr.length?'block':'none';
 }
-function renderLista(sel, arr, perc=false){
+function renderLista(sel,arr,perc=false){
   const el=$$(sel);
   el.innerHTML=arr.map(p=>{
     if(perc){
@@ -205,102 +205,43 @@ function renderLista(sel, arr, perc=false){
 }
 function mostrarGrafico(prod){
   PRODUTO_ATUAL=prod;
-
-  // base de labels (meses)
-  const allMeses=[...new Set(CACHE.map(r=>{
-    const [ano,mes]=r.data.split('-');
-    return `${ano}-${mes}`;
-  }))].sort();
-
-  const canvas=$$('#graficoProduto'); 
-  if(chartProd) chartProd.destroy();
-
+  const allMeses=[...new Set(CACHE.map(r=>{const [ano,mes]=r.data.split('-');return `${ano}-${mes}`;}))].sort();
+  const canvas=$$('#graficoProduto'); if(chartProd)chartProd.destroy();
   const vals=allMeses.map(m=>prod.mes[m]||0);
-
   chartProd=new Chart(canvas.getContext('2d'),{
     type:'line',
-    data:{
-      labels:allMeses.map(formatMes),
-      datasets:[{
-        label:prod.produto,
-        data:vals,
-        borderColor:'#2563eb',
-        pointRadius:5,
-        pointHoverRadius:7,
-        fill:false
-      }]
-    },
-    options:{
-      responsive:true,
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{display:true},
-        tooltip:{
-          callbacks:{
-            label:function(ctx){
-              let val=ctx.parsed.y||0;
-              return ctx.dataset.label+': '+val.toLocaleString('pt-BR')+' un';
-            }
-          }
-        }
-      },
-      scales:{
-        x:{title:{display:true,text:"Meses"},ticks:{autoSkip:false,maxRotation:45,minRotation:45}},
-        y:{beginAtZero:true,title:{display:true,text:"Quantidade"}}
-      }
+    data:{labels:allMeses.map(formatMes),datasets:[{label:prod.produto,data:vals,borderColor:'#2563eb',pointRadius:5,pointHoverRadius:7,fill:false}]},
+    options:{responsive:true,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:true},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.parsed.y||0).toLocaleString('pt-BR')+' un'}}},
+      scales:{x:{title:{display:true,text:"Meses"},ticks:{autoSkip:false,maxRotation:45,minRotation:45}},y:{beginAtZero:true,title:{display:true,text:"Quantidade"}}}
     }
   });
   $$('#tituloProduto').textContent=prod.produto;
-
-  // preencher select
-  const sel=$('#selectComparar');
-  sel.empty();
-  const nomes=[...new Set(CACHE.map(x=>x.produto).filter(n=>n && n!==prod.produto))].sort();
+  const sel=$('#selectComparar'); sel.empty();
+  const nomes=[...new Set(CACHE.map(x=>x.produto).filter(n=>n&&n!==prod.produto))].sort();
   nomes.forEach(nome=>sel.append(new Option(nome,nome)));
-  sel.select2({placeholder:"Digite para buscar produtos...", allowClear:true});
-
+  sel.select2({placeholder:"Digite para buscar produtos...",allowClear:true});
   $$('#modalGrafico').style.display='flex';
 }
 function fecharModal(){ $$('#modalGrafico').style.display='none'; }
 function compararProduto(){
-  const nomes=$('#selectComparar').val(); 
-  if(!nomes || !nomes.length) return;
-
-  const allMeses=[...new Set(CACHE.map(r=>{
-    const [ano,mes]=r.data.split('-'); return `${ano}-${mes}`;
-  }))].sort();
+  const nomes=$('#selectComparar').val(); if(!nomes||!nomes.length)return;
+  const allMeses=[...new Set(CACHE.map(r=>{const [ano,mes]=r.data.split('-');return `${ano}-${mes}`;}))].sort();
   const labels=allMeses.map(formatMes);
-
   nomes.forEach(nome=>{
-    if(chartProd.data.datasets.some(ds=>ds.label===nome)) return;
-    const prod=CACHE.filter(r=>r.produto===nome);
-    if(!prod.length) return;
-    const byMes={};
-    prod.forEach(x=>{
-      const [ano,mes]=x.data.split('-'); 
-      const chave=`${ano}-${mes}`;
-      byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
-    });
+    if(chartProd.data.datasets.some(ds=>ds.label===nome))return;
+    const prod=CACHE.filter(r=>r.produto===nome); if(!prod.length)return;
+    const byMes={}; prod.forEach(x=>{const [ano,mes]=x.data.split('-');const chave=`${ano}-${mes}`;byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);});
     const vals=allMeses.map(m=>byMes[m]||0);
-    chartProd.data.datasets.push({
-      label:nome,
-      data:vals,
-      borderColor:'#'+Math.floor(Math.random()*16777215).toString(16),
-      pointRadius:5,
-      pointHoverRadius:7,
-      fill:false
-    });
+    chartProd.data.datasets.push({label:nome,data:vals,borderColor:'#'+Math.floor(Math.random()*16777215).toString(16),pointRadius:5,pointHoverRadius:7,fill:false});
   });
   chartProd.update();
 }
-async function boot(){
-  try{
-    const arr=await fetchMercatto(); 
-    CACHE=arr; 
-    setDatasMesAtual();  
-    aplicar();
-  }catch(e){ $$('#statusBox').textContent='Erro ao carregar: '+(e.message||e); }
+async function boot(force=false){
+  try{const arr=await fetchMercatto(force);CACHE=arr;setDatasMesAtual();aplicar();}
+  catch(e){$$('#statusBox').textContent='Erro ao carregar: '+(e.message||e);}
 }
+function atualizarAgora(){localStorage.removeItem(STORAGE_KEY);boot(true);}
 window.addEventListener('load',()=>{
   boot();
   ['input','change'].forEach(evt=>{
