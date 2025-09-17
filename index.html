@@ -10,10 +10,10 @@
 <style>
   :root{
     --bg:#f6f8fb; --card:#ffffff; --text:#0f172a; --muted:#6b7280; --line:#e5e7eb;
-    --brand:#2563eb; --radius:16px; --shadow:0 12px 28px rgba(2,6,23,.06);
+    --brand:#2563eb; --ok:#16a34a; --warn:#b45309; --danger:#ef4444;
+    --radius:16px; --shadow:0 12px 28px rgba(2,6,23,.06);
   }
   *{box-sizing:border-box}
-  html, body { height:100%; }
   body{
     margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;
     background:var(--bg); color:var(--text);
@@ -28,7 +28,11 @@
   .container{ padding:20px }
   .grid{ display:grid; gap:16px }
   .filters{ grid-template-columns:repeat(3, minmax(0,1fr)); }
-  @media (max-width:768px){ .filters{ grid-template-columns:1fr; } }
+  .lists{ grid-template-columns:repeat(2, minmax(0,1fr)); }
+  @media (max-width:768px){
+    .filters{ grid-template-columns:1fr; }
+    .lists{ grid-template-columns:1fr; }
+  }
   .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px }
   label{ font-weight:600; font-size:.9rem; margin-bottom:6px; display:block }
   input[type="date"],input[type="text"]{
@@ -63,7 +67,16 @@
     <div class="card"><label>📅 Fim</label><input id="dataFim" type="date" /></div>
   </div>
 
-  <!-- Lista -->
+  <!-- Cards -->
+  <div class="section-title">Análises</div>
+  <div class="grid lists">
+    <div class="card"><h3>⭐ Top 10 Mais Vendidos</h3><div id="maisVendidos"></div></div>
+    <div class="card"><h3>📉 Top 10 Menos Vendidos</h3><div id="menosVendidos"></div></div>
+    <div class="card"><h3>📈 Produtos em Alta</h3><div id="prodAlta"></div></div>
+    <div class="card"><h3>📉 Produtos em Queda</h3><div id="prodQueda"></div></div>
+  </div>
+
+  <!-- Lista geral -->
   <div class="section-title">Produtos Vendidos</div>
   <div class="card">
     <div id="statusBox" class="loader"><div class="spinner"></div> Carregando Mercatto…</div>
@@ -83,7 +96,7 @@
     </div>
     <div>
       <label>Comparar com outro produto:</label>
-      <input id="buscaComparar" type="text" placeholder="Digite o nome..." />
+      <select id="selectComparar"></select>
       <button onclick="compararProduto()">Adicionar</button>
     </div>
   </div>
@@ -116,23 +129,58 @@ function aplicar(){
     if(busca&&!String(r.produto||'').toLowerCase().includes(busca))return false;
     if(di&&r.data<di)return false; if(df&&r.data>df)return false; return true;
   });
-  const byProd={}; F.forEach(x=>{
+
+  // agrupar por produto
+  const byProd={};
+  F.forEach(x=>{
     if(!byProd[x.produto])byProd[x.produto]={produto:x.produto,q:0,mes:{}};
     byProd[x.produto].q+=(x.quantidade||0);
     const [ano,mes]=x.data.split('-'); 
     const chave=`${ano}-${mes}`;
     byProd[x.produto].mes[chave]=(byProd[x.produto].mes[chave]||0)+(x.quantidade||0);
   });
-  const lista=Object.values(byProd).sort((a,b)=>b.q-a.q);
+
+  const arr=Object.values(byProd).sort((a,b)=>b.q-a.q);
+
+  // Top 10 mais e menos vendidos
+  renderLista('#maisVendidos', arr.slice(0,10));
+  renderLista('#menosVendidos', arr.slice(-10));
+
+  // Comparação mês atual x mês anterior
+  const hoje=new Date();
+  const ano=hoje.getFullYear();
+  const mesAtual=String(hoje.getMonth()+1).padStart(2,'0');
+  const mesAnterior=String(hoje.getMonth()).padStart(2,'0');
+  const chaveAtual=`${ano}-${mesAtual}`;
+  const chaveAnterior=`${ano}-${mesAnterior}`;
+
+  const alta=[], queda=[];
+  arr.forEach(p=>{
+    const atual=p.mes[chaveAtual]||0;
+    const anterior=p.mes[chaveAnterior]||0;
+    if(anterior>0){
+      const variacao=((atual-anterior)/anterior)*100;
+      if(variacao>0) alta.push({produto:p.produto,q:atual,perc:variacao});
+      if(variacao<0) queda.push({produto:p.produto,q:atual,perc:variacao});
+    }
+  });
+  renderLista('#prodAlta', alta.sort((a,b)=>b.perc-a.perc).slice(0,10),true);
+  renderLista('#prodQueda', queda.sort((a,b)=>a.perc-b.perc).slice(0,10),true);
+
+  // Lista geral
   const cont=$$('#listaVendas'); cont.innerHTML='';
-  lista.forEach(p=>{
+  arr.forEach(p=>{
     const div=document.createElement('div'); div.className='item';
-    div.textContent=`${p.produto} — ${p.q} un`;
+    div.textContent=`${p.produto} — ${p.q.toLocaleString()} un`;
     div.onclick=()=>mostrarGrafico(p);
     cont.appendChild(div);
   });
-  $$('#statusBox').style.display=lista.length?'none':'block';
-  $$('#listaVendas').style.display=lista.length?'block':'none';
+  $$('#statusBox').style.display=arr.length?'none':'block';
+  $$('#listaVendas').style.display=arr.length?'block':'none';
+}
+function renderLista(sel, arr, perc=false){
+  const el=$$(sel);
+  el.innerHTML=arr.map(p=>`<div class="item">${p.produto} — ${p.q.toLocaleString()} un ${perc?`(${p.perc.toFixed(1)}%)`:''}</div>`).join('')||'<div class="muted">—</div>';
 }
 function mostrarGrafico(prod){
   PRODUTO_ATUAL=prod;
@@ -146,13 +194,25 @@ function mostrarGrafico(prod){
     options:{responsive:true,plugins:{legend:{display:true}}}
   });
   $$('#tituloProduto').textContent=prod.produto;
+
+  // preencher select de comparação
+  const sel=$$('#selectComparar');
+  sel.innerHTML='';
+  CACHE.forEach(x=>{
+    if(x.produto && x.produto!==prod.produto && ![...sel.options].some(o=>o.value===x.produto)){
+      const opt=document.createElement('option');
+      opt.value=x.produto; opt.textContent=x.produto;
+      sel.appendChild(opt);
+    }
+  });
+
   $$('#modalGrafico').style.display='flex';
 }
 function fecharModal(){ $$('#modalGrafico').style.display='none'; }
 function compararProduto(){
-  const nome=($$('#buscaComparar').value||'').toLowerCase();
+  const nome=$$('#selectComparar').value;
   if(!nome) return;
-  const prod=CACHE.filter(r=>r.produto&&r.produto.toLowerCase().includes(nome));
+  const prod=CACHE.filter(r=>r.produto===nome);
   if(!prod.length){alert("Produto não encontrado"); return;}
   const byMes={};
   prod.forEach(x=>{
@@ -160,7 +220,7 @@ function compararProduto(){
     const chave=`${ano}-${mes}`;
     byMes[chave]=(byMes[chave]||0)+(x.quantidade||0);
   });
-  const labels=Object.keys(PRODUTO_ATUAL.mes).sort();
+  const labels=chartProd.data.labels;
   const vals=labels.map(l=>byMes[l]||0);
   chartProd.data.datasets.push({
     label:nome,
